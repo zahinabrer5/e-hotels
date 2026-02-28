@@ -1,3 +1,34 @@
+server:
+  address: localhost
+  port: 8080
+
 spring:
   application:
     name: e-hotels
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/e-Hotels
+#    driver-class-name: org.postgresql.Driver
+
+  data:
+    jpa:
+      repositories:
+        enabled: true
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+    show-sql: false
+    database: mysql
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    open-in-view: true
+
+  config:
+    import: optional:secrets.properties, optional:logging.properties
