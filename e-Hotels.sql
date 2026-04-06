@@ -1,5 +1,5 @@
 -- ==============================================================================
--- Build e-Hotels Database Tables
+-- Build e-Hotels Database Tables (Part 2a)
 -- ==============================================================================
 
 CREATE TABLE Hotel_Chain (
@@ -133,3 +133,61 @@ CREATE TABLE Archive (
     FOREIGN KEY (chainID) REFERENCES Hotel_Chain(chainID) ON DELETE SET NULL,
     FOREIGN KEY (hotel_ID) REFERENCES Hotel(hotel_ID) ON DELETE SET NULL
 );
+
+-- ==============================================================================
+-- Triggers (Part 2d)
+-- ==============================================================================
+
+-- Trigger 1: Automatically maintain the Number_Of_Hotels count in Hotel_Chain
+CREATE OR REPLACE FUNCTION update_hotel_chain_count_func()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE Hotel_Chain 
+        SET Number_Of_Hotels = Number_Of_Hotels + 1 
+        WHERE chainID = NEW.chainID;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE Hotel_Chain 
+        SET Number_Of_Hotels = Number_Of_Hotels - 1 
+        WHERE chainID = OLD.chainID;
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' AND NEW.chainID IS DISTINCT FROM OLD.chainID THEN
+        UPDATE Hotel_Chain 
+        SET Number_Of_Hotels = Number_Of_Hotels - 1 
+        WHERE chainID = OLD.chainID;
+        
+        UPDATE Hotel_Chain 
+        SET Number_Of_Hotels = Number_Of_Hotels + 1 
+        WHERE chainID = NEW.chainID;
+        RETURN NEW;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_hotel_chain_count_trigger
+AFTER INSERT OR DELETE OR UPDATE ON Hotel
+FOR EACH ROW EXECUTE FUNCTION update_hotel_chain_count_func();
+
+
+-- Trigger 2: Prevent double bookings for the same room with overlapping dates
+CREATE OR REPLACE FUNCTION prevent_double_booking_func()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM Booking
+        WHERE roomID = NEW.roomID
+          -- Skip checking against the same booking record if updating
+          AND bookingID != COALESCE(NEW.bookingID, -1)
+          AND (NEW.startDate < endDate AND NEW.endDate > startDate)
+    ) THEN
+        RAISE EXCEPTION 'Room % is already booked for the requested dates!', NEW.roomID;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER prevent_double_booking_trigger
+BEFORE INSERT OR UPDATE ON Booking
+FOR EACH ROW EXECUTE FUNCTION prevent_double_booking_func();
