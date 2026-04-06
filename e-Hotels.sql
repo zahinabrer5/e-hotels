@@ -191,3 +191,28 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER prevent_double_booking_trigger
 BEFORE INSERT OR UPDATE ON Booking
 FOR EACH ROW EXECUTE FUNCTION prevent_double_booking_func();
+
+-- ==============================================================================
+-- Indexes (Part 2e)
+-- ==============================================================================
+
+-- Index 1: Booking dates and room
+CREATE INDEX idx_booking_room_dates ON Booking (roomID, startDate, endDate);
+-- This will significantly improve performance as the database increases in size.
+-- Specifically, it helps reduce the amount of time needed to check for overlaps
+-- in prevent_double_booking_func.
+-- Without this index, the database would eventually have to scan the entire
+-- Booking table whenever the user tries to book a room.
+
+-- Index 2: Find Hotel Rooms by Capacity and Price
+CREATE INDEX idx_room_search ON Hotel_Room (hotel_ID, Capacity, Price);
+-- The most common kind of query would look like "Find single rooms (Capacity=1)
+-- in hotel X with price less than $150."
+-- This index will significantly reduce the amount of time taken for these kinds
+-- of queries.
+
+-- Index 3: Find Renting by Customer
+CREATE INDEX idx_customer_renting ON Renting (custID, checkInDate);
+-- This index will reduce the time required for generating things like invoices
+-- or user dashboards, which require finding the rentings issued by a certain
+-- customer.
