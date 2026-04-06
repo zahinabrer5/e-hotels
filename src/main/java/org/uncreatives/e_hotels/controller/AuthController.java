@@ -11,6 +11,7 @@ import org.uncreatives.e_hotels.config.JwtUtil;
 
 import java.util.Map;
 
+@CrossOrigin("*")
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
