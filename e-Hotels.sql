@@ -23,7 +23,7 @@ CREATE TABLE Chain_PhoneNumber (
     FOREIGN KEY (chainID) REFERENCES Hotel_Chain(chainID) ON DELETE CASCADE
 );
 
--- Note: Manager_National_ID foreign key is added later via ALTER TABLE 
+-- Note: Manager_National_ID foreign key is added later via ALTER TABLE
 -- to avoid circular dependency errors with the Employee table during creation
 CREATE TABLE Hotel (
     hotel_ID INT PRIMARY KEY,
@@ -120,7 +120,7 @@ CREATE TABLE Renting (
 
 CREATE TABLE Archive (
     archiveID INT PRIMARY KEY,
-    chainID INT, 
+    chainID INT,
     hotel_ID INT,
     recordType VARCHAR(20) CHECK (recordType IN ('Booking', 'Renting')),
     customerName VARCHAR(100) NOT NULL,
@@ -134,6 +134,7 @@ CREATE TABLE Archive (
     FOREIGN KEY (hotel_ID) REFERENCES Hotel(hotel_ID) ON DELETE SET NULL
 );
 
+
 -- ==============================================================================
 -- Triggers (Part 2d)
 -- ==============================================================================
@@ -143,22 +144,22 @@ CREATE OR REPLACE FUNCTION update_hotel_chain_count_func()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        UPDATE Hotel_Chain 
-        SET Number_Of_Hotels = Number_Of_Hotels + 1 
+        UPDATE Hotel_Chain
+        SET Number_Of_Hotels = Number_Of_Hotels + 1
         WHERE chainID = NEW.chainID;
         RETURN NEW;
     ELSIF TG_OP = 'DELETE' THEN
-        UPDATE Hotel_Chain 
-        SET Number_Of_Hotels = Number_Of_Hotels - 1 
+        UPDATE Hotel_Chain
+        SET Number_Of_Hotels = Number_Of_Hotels - 1
         WHERE chainID = OLD.chainID;
         RETURN OLD;
     ELSIF TG_OP = 'UPDATE' AND NEW.chainID IS DISTINCT FROM OLD.chainID THEN
-        UPDATE Hotel_Chain 
-        SET Number_Of_Hotels = Number_Of_Hotels - 1 
+        UPDATE Hotel_Chain
+        SET Number_Of_Hotels = Number_Of_Hotels - 1
         WHERE chainID = OLD.chainID;
-        
-        UPDATE Hotel_Chain 
-        SET Number_Of_Hotels = Number_Of_Hotels + 1 
+
+        UPDATE Hotel_Chain
+        SET Number_Of_Hotels = Number_Of_Hotels + 1
         WHERE chainID = NEW.chainID;
         RETURN NEW;
     END IF;
@@ -192,6 +193,7 @@ CREATE TRIGGER prevent_double_booking_trigger
 BEFORE INSERT OR UPDATE ON Booking
 FOR EACH ROW EXECUTE FUNCTION prevent_double_booking_func();
 
+
 -- ==============================================================================
 -- Indexes (Part 2e)
 -- ==============================================================================
@@ -216,3 +218,29 @@ CREATE INDEX idx_customer_renting ON Renting (custID, checkInDate);
 -- This index will reduce the time required for generating things like invoices
 -- or user dashboards, which require finding the rentings issued by a certain
 -- customer.
+
+
+-- ==============================================================================
+-- Views (Part 2f)
+-- ==============================================================================
+
+-- View 1: Number of available rooms per area
+-- Assumption: Use Hotel_Address as the "area" mentioned in the description for 2f
+CREATE VIEW Available_Rooms_Per_Area AS
+SELECT
+    h.Hotel_Address AS Area,
+    COUNT(r.roomID) AS Available_Rooms
+FROM Hotel_Room r
+JOIN Hotel h ON r.hotel_ID = h.hotel_ID
+WHERE r.Room_Status = 'Available'
+GROUP BY h.Hotel_Address;
+
+-- View 2: Aggregated capacity of all the rooms of a specific hotel
+CREATE VIEW Hotel_Capacity AS
+SELECT
+    h.hotel_ID,
+    h.Hotel_Address,
+    COALESCE(SUM(r.Capacity), 0) AS Total_Capacity
+FROM Hotel h
+LEFT JOIN Hotel_Room r ON h.hotel_ID = r.hotel_ID
+GROUP BY h.hotel_ID, h.Hotel_Address;
