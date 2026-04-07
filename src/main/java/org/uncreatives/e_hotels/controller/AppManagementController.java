@@ -3,6 +3,7 @@ package org.uncreatives.e_hotels.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -518,8 +519,26 @@ public class AppManagementController {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Room with this roomID already exists");
         }
 
+        Integer roomNumberCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM Hotel_Room WHERE hotel_ID = ? AND roomNumber = ?",
+                Integer.class,
+                hotelId,
+                roomNumber
+        );
+
+        if (roomNumberCount != null && roomNumberCount > 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Room number " + roomNumber + " already exists for hotel_ID " + hotelId
+            );
+        }
+
         String query = "INSERT INTO Hotel_Room (roomID, hotel_ID, roomNumber, Price, Room_Status, Extendable, Room_View, Capacity, Problems_Damages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        jdbcTemplate.update(query, roomId, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages);
+        try {
+            jdbcTemplate.update(query, roomId, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages);
+        } catch (DataIntegrityViolationException ex) {
+            throw toRoomConstraintException(ex, roomId, hotelId, roomNumber);
+        }
         return "Room created successfully";
     }
 
@@ -574,8 +593,27 @@ public class AppManagementController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "hotel_ID does not reference an existing hotel");
         }
 
+        Integer roomNumberConflictCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM Hotel_Room WHERE hotel_ID = ? AND roomNumber = ? AND roomID <> ?",
+                Integer.class,
+                hotelId,
+                roomNumber,
+                roomID
+        );
+
+        if (roomNumberConflictCount != null && roomNumberConflictCount > 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Room number " + roomNumber + " already exists for hotel_ID " + hotelId
+            );
+        }
+
         String query = "UPDATE Hotel_Room SET hotel_ID = ?, roomNumber = ?, Price = ?, Room_Status = ?, Extendable = ?, Room_View = ?, Capacity = ?, Problems_Damages = ? WHERE roomID = ?";
-        jdbcTemplate.update(query, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages, roomID);
+        try {
+            jdbcTemplate.update(query, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages, roomID);
+        } catch (DataIntegrityViolationException ex) {
+            throw toRoomConstraintException(ex, roomID, hotelId, roomNumber);
+        }
         return "Room updated successfully";
     }
 
@@ -588,6 +626,23 @@ public class AppManagementController {
     // Bookings
     @GetMapping("/bookings")
     public List<Map<String, Object>> getAllBookings() {
+        String query = """
+            SELECT
+                b.bookingID AS "bookingId",
+                b.custID AS "custId",
+                b.roomID AS "roomId",
+                b.startDate AS "startDate",
+                b.endDate AS "endDate",
+                b.bookingTime AS "bookingTime"
+            FROM Booking b
+            ORDER BY b.startDate, b.bookingID
+            """;
+
+        return jdbcTemplate.queryForList(query);
+    }
+
+    @GetMapping("/bookings/open")
+    public List<Map<String, Object>> getOpenBookings() {
         String query = """
             SELECT
                 b.bookingID AS "bookingId",
@@ -683,6 +738,39 @@ public class AppManagementController {
     //     jdbcTemplate.update("DELETE FROM Booking WHERE bookingID = ?", bookingID);
     //     return "Booking deleted successfully";
     // }
+
+    private ResponseStatusException toRoomConstraintException(
+            DataIntegrityViolationException ex,
+            Integer roomId,
+            Integer hotelId,
+            String roomNumber
+    ) {
+        Throwable rootCause = ex.getMostSpecificCause();
+        String rootMessage = rootCause != null ? rootCause.getMessage() : ex.getMessage();
+        String normalized = rootMessage == null ? "" : rootMessage.toLowerCase();
+
+        if (normalized.contains("hotel_room_hotel_id_roomnumber_key")) {
+            return new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Room number " + roomNumber + " already exists for hotel_ID " + hotelId,
+                    ex
+            );
+        }
+
+        if (normalized.contains("hotel_room_pkey")) {
+            return new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Room with roomID " + roomId + " already exists",
+                    ex
+            );
+        }
+
+        return new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Room payload violates database constraints",
+                ex
+        );
+    }
 
     private Integer toInteger(Object value, String fieldName, boolean required) {
         if (value == null) {

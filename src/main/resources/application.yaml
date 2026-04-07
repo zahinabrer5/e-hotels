@@ -32,3 +32,8 @@ spring:
 
   config:
     import: optional:secrets.properties, optional:logging.properties
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:ehotels-dev-jwt-secret-change-this-before-prod}
+    expiration-ms: ${JWT_EXPIRATION_MS:36000000}

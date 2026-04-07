@@ -30,8 +30,18 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String jwt = null;
         String role = null;
 
-        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-            jwt = authorizationHeader.substring(7);
+        if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+            jwt = authorizationHeader.trim();
+            if (jwt.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                jwt = jwt.substring(7).trim();
+            }
+            jwt = normalizeToken(jwt);
+
+            if (jwt.isEmpty()) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             try {
                 username = jwtUtil.extractUsername(jwt);
                 role = jwtUtil.extractRole(jwt);
@@ -50,5 +60,22 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private String normalizeToken(String token) {
+        if (token == null) {
+            return "";
+        }
+
+        String normalized = token.trim();
+        if (normalized.length() >= 2) {
+            boolean isDoubleQuoted = normalized.startsWith("\"") && normalized.endsWith("\"");
+            boolean isSingleQuoted = normalized.startsWith("'") && normalized.endsWith("'");
+            if (isDoubleQuoted || isSingleQuoted) {
+                normalized = normalized.substring(1, normalized.length() - 1).trim();
+            }
+        }
+
+        return normalized;
     }
 }
