@@ -509,10 +509,15 @@ public class AppManagementController {
                 roomId
         );
 
+        boolean generatedRoomId = requestedRoomId == null;
+        boolean generatedRoomNumber = roomNumberDerivedFromRoomId;
+
         if (roomCount != null && roomCount > 0) {
             roomId = nextRoomId();
+            generatedRoomId = true;
             if (roomNumberDerivedFromRoomId) {
                 roomNumber = String.valueOf(roomId);
+                generatedRoomNumber = true;
             }
         }
 
@@ -524,10 +529,8 @@ public class AppManagementController {
         );
 
         if (roomNumberCount != null && roomNumberCount > 0) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Room number " + roomNumber + " already exists for hotel_ID " + hotelId
-            );
+            roomNumber = nextAvailableRoomNumber(hotelId, roomNumber);
+            generatedRoomNumber = true;
         }
 
         String query = "INSERT INTO Hotel_Room (roomID, hotel_ID, roomNumber, Price, Room_Status, Extendable, Room_View, Capacity, Problems_Damages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -536,9 +539,17 @@ public class AppManagementController {
         } catch (DataIntegrityViolationException ex) {
             throw toRoomConstraintException(ex, roomId, hotelId, roomNumber);
         }
-        if (requestedRoomId == null || !requestedRoomId.equals(roomId)) {
+
+        if (generatedRoomId && generatedRoomNumber) {
+            return "Room created successfully with generated roomID " + roomId + " and roomNumber " + roomNumber;
+        }
+        if (generatedRoomId) {
             return "Room created successfully with generated roomID " + roomId;
         }
+        if (generatedRoomNumber) {
+            return "Room created successfully with generated roomNumber " + roomNumber;
+        }
+
         return "Room created successfully";
     }
 
@@ -786,6 +797,44 @@ public class AppManagementController {
         );
 
         return (maxRoomId == null ? 0 : maxRoomId) + 1;
+    }
+
+    private String nextAvailableRoomNumber(Integer hotelId, String requestedRoomNumber) {
+        String preferred = requestedRoomNumber == null ? "" : requestedRoomNumber.trim();
+        if (preferred.isEmpty()) {
+            preferred = "1";
+        }
+
+        if (preferred.matches("\\d+")) {
+            int candidate = Math.max(Integer.parseInt(preferred), 1);
+            while (roomNumberExists(hotelId, String.valueOf(candidate))) {
+                candidate++;
+            }
+            return String.valueOf(candidate);
+        }
+
+        if (!roomNumberExists(hotelId, preferred)) {
+            return preferred;
+        }
+
+        int suffix = 2;
+        String candidate = preferred + "-" + suffix;
+        while (roomNumberExists(hotelId, candidate)) {
+            suffix++;
+            candidate = preferred + "-" + suffix;
+        }
+        return candidate;
+    }
+
+    private boolean roomNumberExists(Integer hotelId, String roomNumber) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM Hotel_Room WHERE hotel_ID = ? AND roomNumber = ?",
+                Integer.class,
+                hotelId,
+                roomNumber
+        );
+
+        return count != null && count > 0;
     }
 
     private Integer toInteger(Object value, String fieldName, boolean required) {
