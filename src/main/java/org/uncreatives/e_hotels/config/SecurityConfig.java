@@ -38,6 +38,8 @@ public class SecurityConfig {
                 // Allow public access to view the rooms, statistics, and views directly from the website UI
                 .requestMatchers("/api/management/search-rooms").permitAll()
                 .requestMatchers("/api/management/views/**").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/management/customers").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/auth/login").permitAll()
                 .requestMatchers("/api/auth/**").permitAll()
                 
                 // Allow public access to Swagger UI & OpenAPI Docs
@@ -49,10 +51,16 @@ public class SecurityConfig {
                 .requestMatchers("/api/management/rent").hasAuthority("ROLE_EMPLOYEE")
                 
                 // Allow users to perform CRUD data operations on customers, employees, hotels, and rooms
-                .requestMatchers("/api/management/customers/**").hasAnyAuthority("ROLE_CUSTOMER", "ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/customers").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/customers/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/employees").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/employees/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/hotels").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/hotels/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/rooms").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/rooms/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/bookings/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/rentings/**").hasAuthority("ROLE_EMPLOYEE")
                 .anyRequest().authenticated()
             );
             
