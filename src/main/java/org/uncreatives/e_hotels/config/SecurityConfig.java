@@ -1,6 +1,5 @@
 package org.uncreatives.e_hotels.config;
 
-import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -33,11 +32,8 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.FORWARD).permitAll()
-
                 // Needed for CORS
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/error").permitAll()
                 
                 // Allow public access to view the rooms, statistics, and views directly from the website UI
                 .requestMatchers("/api/management/search-rooms").permitAll()
@@ -63,7 +59,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/management/hotels/**").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/rooms").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/rooms/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/bookings").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/bookings/**").hasAuthority("ROLE_EMPLOYEE")
+                .requestMatchers("/api/management/rentings").hasAuthority("ROLE_EMPLOYEE")
                 .requestMatchers("/api/management/rentings/**").hasAuthority("ROLE_EMPLOYEE")
                 .anyRequest().authenticated()
             );

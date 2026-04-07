@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -129,41 +130,37 @@ public class AppManagementController {
                     @ExampleObject(name = "Convert Booking to Renting", value = "{\n  \"bookingId\": 10,\n  \"custId\": \"222-000-001\",\n  \"roomId\": 1,\n  \"employeeId\": \"111-000-001\",\n  \"checkInDate\": \"2026-05-01\",\n  \"checkOutDate\": \"2026-05-15\",\n  \"paymentAmount\": 1500.00\n}")
             }))
             @RequestBody Map<String, Object> payload) {
-        Integer bookingId = toInteger(payload.get("bookingId"), "bookingId", false); // nullable for direct rentings
-        String custId = (String) payload.get("custId");
-        Integer roomId = toInteger(payload.get("roomId"), "roomId", true);
-        String employeeId = (String) payload.get("employeeId");
-        String checkIn = (String) payload.get("checkInDate");
-        String checkOut = (String) payload.get("checkOutDate");
-        Double paymentAmount = Double.valueOf(payload.get("paymentAmount").toString());
+        Integer bookingId = toInteger(readFirstValue(payload, "bookingId", "bookingID", "booking_id"), "bookingId", false);
+        String custId = readOptionalString(payload, "custId", "custID", "customerId", "customerID");
+        Integer roomId = toInteger(readFirstValue(payload, "roomId", "roomID", "room_id"), "roomId", false);
+        String employeeId = readRequiredString(payload, "employeeId", "employeeID", "employee_id");
+        String checkIn = readRequiredString(payload, "checkInDate", "checkinDate", "check_in_date");
+        String checkOut = readRequiredString(payload, "checkOutDate", "checkoutDate", "check_out_date");
+        Double paymentAmount = toDouble(readFirstValue(payload, "paymentAmount", "payment_amount"), "paymentAmount", true);
 
-        if (custId == null || custId.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing custId");
-        }
-        if (employeeId == null || employeeId.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing employeeId");
-        }
-        if (checkIn == null || checkIn.isBlank() || checkOut == null || checkOut.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing check-in/check-out date");
-        }
         if (paymentAmount < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "paymentAmount cannot be negative");
         }
 
         if (bookingId != null) {
-            Integer bookingCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM Booking WHERE bookingID = ? AND custID = ? AND roomID = ?",
-                    Integer.class,
-                    bookingId,
-                    custId,
-                    roomId
-            );
-
-            if (bookingCount == null || bookingCount == 0) {
-                throw new ResponseStatusException(
-                        HttpStatus.BAD_REQUEST,
-                        "bookingId does not match an existing booking for this customer/room"
+            Map<String, Object> bookingRow;
+            try {
+                bookingRow = jdbcTemplate.queryForMap(
+                        "SELECT custID, roomID FROM Booking WHERE bookingID = ?",
+                        bookingId
                 );
+            } catch (EmptyResultDataAccessException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "bookingId does not reference an existing booking", ex);
+            }
+
+            String bookingCustId = readRequiredString(bookingRow, "custid", "custID");
+            Integer bookingRoomId = toInteger(readFirstValue(bookingRow, "roomid", "roomID"), "roomId", true);
+
+            if (custId == null || custId.isBlank() || !bookingCustId.equals(custId)) {
+                custId = bookingCustId;
+            }
+            if (roomId == null || !bookingRoomId.equals(roomId)) {
+                roomId = bookingRoomId;
             }
 
             Integer convertedCount = jdbcTemplate.queryForObject(
@@ -173,11 +170,16 @@ public class AppManagementController {
             );
 
             if (convertedCount != null && convertedCount > 0) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "This booking has already been converted to a renting"
-                );
+                jdbcTemplate.update("DELETE FROM Booking WHERE bookingID = ?", bookingId);
+                return "Booking already had a renting entry. Booking removed from pending list.";
             }
+        }
+
+        if (custId == null || custId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing custId");
+        }
+        if (roomId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing roomId");
         }
 
         String query = "INSERT INTO Renting (rentingID, bookingID, custID, roomID, National_ID, checkInDate, checkOutDate, paymentAmount) " +
@@ -185,6 +187,10 @@ public class AppManagementController {
                 // ^ use COALESCE to get generate the next ID
 
         jdbcTemplate.update(query, bookingId, custId, roomId, employeeId, checkIn, checkOut, paymentAmount);
+
+        if (bookingId != null) {
+            jdbcTemplate.update("DELETE FROM Booking WHERE bookingID = ?", bookingId);
+        }
 
         // Update room status after successful check-in.
         jdbcTemplate.update("UPDATE Hotel_Room SET Room_Status = 'Occupied' WHERE roomID = ?", roomId);
@@ -382,17 +388,7 @@ public class AppManagementController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "chainID does not reference an existing hotel chain");
         }
 
-        if (managerNationalId != null && !managerNationalId.isBlank()) {
-            Integer managerCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM Employee WHERE National_ID = ?",
-                    Integer.class,
-                    managerNationalId
-            );
-
-            if (managerCount == null || managerCount == 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Manager_National_ID does not reference an existing employee");
-            }
-        }
+        managerNationalId = resolveManagerNationalIdOrNull(managerNationalId);
 
         String query = "INSERT INTO Hotel (hotel_ID, chainID, Email, Hotel_Address, Rating, Manager_National_ID) VALUES (?, ?, ?, ?, ?, ?)";
         jdbcTemplate.update(query, hotelId, chainId, email, address, rating, managerNationalId);
@@ -443,26 +439,22 @@ public class AppManagementController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "chainID does not reference an existing hotel chain");
         }
 
-        if (managerNationalId != null && !managerNationalId.isBlank()) {
-            Integer managerCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM Employee WHERE National_ID = ?",
-                    Integer.class,
-                    managerNationalId
-            );
-
-            if (managerCount == null || managerCount == 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Manager_National_ID does not reference an existing employee");
-            }
-        }
+        managerNationalId = resolveManagerNationalIdOrNull(managerNationalId);
 
         String query = "UPDATE Hotel SET chainID = ?, Email = ?, Hotel_Address = ?, Rating = ?, Manager_National_ID = ? WHERE hotel_ID = ?";
-        jdbcTemplate.update(query, chainId, email, address, rating, managerNationalId, hotelID);
+        int updatedRows = jdbcTemplate.update(query, chainId, email, address, rating, managerNationalId, hotelID);
+        if (updatedRows == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Hotel not found");
+        }
         return "Hotel updated successfully";
     }
 
     @DeleteMapping("/hotels/{hotelID}")
     public String deleteHotel(@PathVariable Integer hotelID) {
-        jdbcTemplate.update("DELETE FROM Hotel WHERE hotel_ID = ?", hotelID);
+        int deletedRows = jdbcTemplate.update("DELETE FROM Hotel WHERE hotel_ID = ?", hotelID);
+        if (deletedRows == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Hotel not found");
+        }
         return "Hotel deleted successfully";
     }
 
@@ -479,9 +471,11 @@ public class AppManagementController {
 
     @PostMapping("/rooms")
     public String insertRoom(@RequestBody Map<String, Object> payload) {
-        Integer roomId = toInteger(readFirstValue(payload, "roomID", "roomId", "room_id", "roomid"), "roomID", true);
+        Integer requestedRoomId = toInteger(readFirstValue(payload, "roomID", "roomId", "room_id", "roomid"), "roomID", false);
+        Integer roomId = requestedRoomId != null ? requestedRoomId : nextRoomId();
         Integer hotelId = toInteger(readFirstValue(payload, "hotel_ID", "hotelId", "hotelID", "hotel_id", "hotelid"), "hotel_ID", true);
         String roomNumber = readOptionalString(payload, "roomNumber", "room_number", "roomnumber");
+        boolean roomNumberDerivedFromRoomId = roomNumber == null || roomNumber.isBlank();
         Double price = toDouble(readFirstValue(payload, "Price", "price"), "Price", true);
         String roomStatus = readOptionalString(payload, "Room_Status", "roomStatus", "room_status", "roomstatus");
         Boolean extendable = toBoolean(readFirstValue(payload, "Extendable", "extendable"), "Extendable", false);
@@ -489,7 +483,7 @@ public class AppManagementController {
         Integer capacity = toInteger(readFirstValue(payload, "Capacity", "capacity"), "Capacity", false);
         String problemsDamages = readOptionalString(payload, "Problems_Damages", "problemsDamages", "problems_damages");
 
-        if (roomNumber == null || roomNumber.isBlank()) {
+        if (roomNumberDerivedFromRoomId) {
             roomNumber = String.valueOf(roomId);
         }
         if (roomStatus == null || roomStatus.isBlank()) {
@@ -516,7 +510,10 @@ public class AppManagementController {
         );
 
         if (roomCount != null && roomCount > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Room with this roomID already exists");
+            roomId = nextRoomId();
+            if (roomNumberDerivedFromRoomId) {
+                roomNumber = String.valueOf(roomId);
+            }
         }
 
         Integer roomNumberCount = jdbcTemplate.queryForObject(
@@ -538,6 +535,9 @@ public class AppManagementController {
             jdbcTemplate.update(query, roomId, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages);
         } catch (DataIntegrityViolationException ex) {
             throw toRoomConstraintException(ex, roomId, hotelId, roomNumber);
+        }
+        if (requestedRoomId == null || !requestedRoomId.equals(roomId)) {
+            return "Room created successfully with generated roomID " + roomId;
         }
         return "Room created successfully";
     }
@@ -610,7 +610,10 @@ public class AppManagementController {
 
         String query = "UPDATE Hotel_Room SET hotel_ID = ?, roomNumber = ?, Price = ?, Room_Status = ?, Extendable = ?, Room_View = ?, Capacity = ?, Problems_Damages = ? WHERE roomID = ?";
         try {
-            jdbcTemplate.update(query, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages, roomID);
+            int updatedRows = jdbcTemplate.update(query, hotelId, roomNumber, price, roomStatus, extendable, roomView, capacity, problemsDamages, roomID);
+            if (updatedRows == 0) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found");
+            }
         } catch (DataIntegrityViolationException ex) {
             throw toRoomConstraintException(ex, roomID, hotelId, roomNumber);
         }
@@ -619,7 +622,10 @@ public class AppManagementController {
 
     @DeleteMapping("/rooms/{roomID}")
     public String deleteRoom(@PathVariable Integer roomID) {
-        jdbcTemplate.update("DELETE FROM Hotel_Room WHERE roomID = ?", roomID);
+        int deletedRows = jdbcTemplate.update("DELETE FROM Hotel_Room WHERE roomID = ?", roomID);
+        if (deletedRows == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found");
+        }
         return "Room deleted successfully";
     }
 
@@ -633,31 +639,14 @@ public class AppManagementController {
                 b.roomID AS "roomId",
                 b.startDate AS "startDate",
                 b.endDate AS "endDate",
-                b.bookingTime AS "bookingTime"
+                b.bookingTime AS "bookingTime",
+                EXISTS (
+                    SELECT 1
+                    FROM Renting r
+                    WHERE r.bookingID = b.bookingID
+                ) AS "alreadyConverted"
             FROM Booking b
-            ORDER BY b.startDate, b.bookingID
-            """;
-
-        return jdbcTemplate.queryForList(query);
-    }
-
-    @GetMapping("/bookings/open")
-    public List<Map<String, Object>> getOpenBookings() {
-        String query = """
-            SELECT
-                b.bookingID AS "bookingId",
-                b.custID AS "custId",
-                b.roomID AS "roomId",
-                b.startDate AS "startDate",
-                b.endDate AS "endDate",
-                b.bookingTime AS "bookingTime"
-            FROM Booking b
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM Renting r
-                WHERE r.bookingID = b.bookingID
-            )
-            ORDER BY b.startDate, b.bookingID
+            ORDER BY "alreadyConverted", b.startDate, b.bookingID
             """;
 
         return jdbcTemplate.queryForList(query);
@@ -770,6 +759,33 @@ public class AppManagementController {
                 "Room payload violates database constraints",
                 ex
         );
+    }
+
+    private String resolveManagerNationalIdOrNull(String managerNationalId) {
+        if (managerNationalId == null || managerNationalId.isBlank()) {
+            return null;
+        }
+
+        Integer managerCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM Employee WHERE National_ID = ?",
+                Integer.class,
+                managerNationalId
+        );
+
+        if (managerCount == null || managerCount == 0) {
+            return null;
+        }
+
+        return managerNationalId;
+    }
+
+    private Integer nextRoomId() {
+        Integer maxRoomId = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(roomID), 0) FROM Hotel_Room",
+                Integer.class
+        );
+
+        return (maxRoomId == null ? 0 : maxRoomId) + 1;
     }
 
     private Integer toInteger(Object value, String fieldName, boolean required) {
